@@ -1,0 +1,17 @@
+{
+  "name": "guild-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "googleapis": "^156.0.0",
+    "telegraf": "^4.16.3"
+  }
+}
