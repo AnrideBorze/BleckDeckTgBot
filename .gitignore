@@ -1,0 +1,49 @@
+# --- Node / package managers ---
+node_modules/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Builds / caches / coverage ---
+dist/
+build/
+.tmp/
+temp/
+tmp/
+.cache/
+.parcel-cache/
+coverage/
+.nyc_output/
+.eslintcache
+*.tsbuildinfo
+
+# --- Env & secrets (залишимо приклад) ---
+.env
+.env.*
+!.env.example
+.env.vault
+.env.keys
+
+# --- Credentials & local data ---
+credentials/
+!credentials/.gitkeep
+data/
+!data/.gitkeep
+
+# (якщо тримаєш ключ поза папкою)
+service-account.json
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- IDE ---
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.iml
