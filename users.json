@@ -1,0 +1,37 @@
+// ===== Ролі (admins / coordinators) =====
+const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+if (!fs.existsSync(ROLES_FILE)) {
+  fs.writeFileSync(ROLES_FILE, JSON.stringify({ admins: [], coordinators: [] }, null, 2), 'utf8');
+}
+function loadRoles() {
+  try { return JSON.parse(fs.readFileSync(ROLES_FILE, 'utf8')); }
+  catch { return { admins: [], coordinators: [] }; }
+}
+function saveRoles(r) {
+  fs.writeFileSync(ROLES_FILE, JSON.stringify(r, null, 2), 'utf8');
+}
+let ROLES = loadRoles();
+
+function isOwner(id)        { return OWNER_IDS.includes(Number(id)); }
+function isAdmin(id)        { return isOwner(id) || ROLES.admins.includes(Number(id)); }
+function isCoordinator(id)  { return isAdmin(id) || ROLES.coordinators.includes(Number(id)); }
+
+function requireOwner(ctx) {
+  if (!isOwner(ctx.from.id)) { ctx.reply('⛔ Лише власник може це робити.'); return false; }
+  return true;
+}
+function requireAdmin(ctx) {
+  if (!isAdmin(ctx.from.id)) { ctx.reply('⛔ Лише адмін або власник.'); return false; }
+  return true;
+}
+function requireCoordinator(ctx) {
+  if (!isCoordinator(ctx.from.id)) { ctx.reply('⛔ Лише координатор/адмін/власник.'); return false; }
+  return true;
+}
+
+// зручно: кого змінюємо — з реплаю або числового аргументу
+function resolveTargetUserId(ctx, arg) {
+  if (ctx.message?.reply_to_message?.from?.id) return Number(ctx.message.reply_to_message.from.id);
+  if (/^\d+$/.test(String(arg||'').trim())) return Number(arg);
+  return null; // проситимемо відповісти реплаєм або дати ID
+}
