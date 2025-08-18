@@ -606,6 +606,29 @@ async function getBuildingPriorities() {
   return m;
 }
 
+async function getPlanLookRows(building) {
+  const sheets = await getSheets();
+  const range = `${SHEET_PLAN}!A3:G`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range
+  });
+  const values = res.data.values || [];
+  const norm = (s) => String(s || '').trim().toLowerCase();
+
+  const target = norm(building);
+  const rows = [];
+  for (const r of values) {
+    const A = r[0], B = r[1], C = r[2], D = r[3], E = r[4], F = r[5], G = r[6];
+    if (norm(A) === target) {
+      const goal = [B, C, D, E].filter(Boolean).join(' ');
+      const carrier = [F, G].filter(Boolean).join(' ');
+      rows.push({ goal, carrier });
+    }
+  }
+  return rows;
+}
+
 // === Gate priorities from data!K:M ===
 // K = назва будівлі (як у Плануванні), L = пріоритет фаза1, M = пріоритет фаза2
 // Повертає масив об'єктів: { name, p1, p2 }
@@ -714,6 +737,7 @@ module.exports = {
   getRandomFightTarget,
   getClassificationInfo,
   getReservList,
+  getPlanLookRows,
   clearDestroyedAndSetRemain,
   updateAltar,
   updateGod,

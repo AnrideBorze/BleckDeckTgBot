@@ -17,7 +17,7 @@ const {
   getAllowedBuildings,
   getAllowedEnemyNicks,
   getAllowedEnemyGuilds,
-  
+  getPlanLookRows,
   findRowByNick,
   appendPlayerRow,
   readRow,
@@ -355,7 +355,7 @@ bot.on('callback_query', async (ctx) => {
     const code = data.split(':')[1];
 
     // 4 звичайні колоди
-    const normalCodes = { s1: {index:1,label:'1'}, s2:{index:2,label:'2'}, s3:{index:3,label:'3'}, s4:{index:4,label:'4'} };
+    const normalCodes = { s1: {index:1,label:'Колода 1'}, s2:{index:2,label:'Колода 2'}, s3:{index:3,label:'Колода 3'}, s4:{index:4,label:'Колода 4'} };
     if (normalCodes[code]) {
       const slot = normalCodes[code];
       const factions = await getFactions(); // лише зі списку
@@ -767,6 +767,44 @@ bot.command('enemies', async (ctx) => {
   }
   if (buf) await ctx.reply(buf);
 });
+
+bot.command('look', async (ctx) => {
+  if (!requireCoordinator(ctx)) return;
+
+  const raw = (ctx.message.text || '').split(' ').slice(1).join(' ').trim();
+  if (!raw) {
+    return ctx.reply('Вкажи будівлю: /look <назва>\nПриклад: /look Бібліотека');
+  }
+
+  const norm = (s) => String(s || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const buildings = await getAllowedBuildings(); // data!A2:A20
+  const match = buildings.find(b => norm(b) === norm(raw));
+
+  if (!match) {
+    const sample = buildings.slice(0, 10).join(', ');
+    return ctx.reply('❌ Невідома будівля. Перевір назву у data!A.\nПриклади: ' + sample + (buildings.length > 10 ? '…' : ''));
+  }
+
+  const rows = await getPlanLookRows(match);
+  if (!rows.length) return ctx.reply(`Для «${match}» записів не знайдено.`);
+
+  const lines = rows.map(r => `Ціль (${r.goal}) - Виносить (${r.carrier})`);
+
+  // проста відправка з невеликим чанкуванням (на всяк випадок)
+  const header = `🏰 ${match}\n`;
+  let buf = header;
+  for (const line of lines) {
+    const next = (buf ? buf + '\n' : '') + line;
+    if (next.length > 3500) { // запас до ліміту TG
+      await ctx.reply(buf);
+      buf = line;
+    } else {
+      buf = next;
+    }
+  }
+  if (buf) await ctx.reply(buf);
+});
+
 
 // ----- roles -----
 bot.command('whoami', (ctx) => {
