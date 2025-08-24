@@ -1,7 +1,7 @@
 // sheets.js
 const fs = require('fs');
 const { google } = require('googleapis');
-google.options({ timeout: 60000 });
+google.options({ timeout: 300000 });
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '1CiIVg4aOmNL96cEkrgkrsaQ2mDIonGdrKOlrHDruAb0';
 const SHEET_DECKS   = 'Наші колоди';
@@ -10,6 +10,7 @@ const SHEET_DATA    = 'data';
 const SHEET_PLAN    = process.env.SHEET_PLAN || 'Планування';
 const SHEET_ENEMIES = process.env.SHEET_ENEMIES || 'Колоди противників';
 const SHEET_CLASS  = process.env.SHEET_CLASS || 'Класифікація сил';
+const SHEET_STATS = process.env.SHEET_STATS || 'Статистика';
 
 // ---------- Auth ----------
 async function getAuth() {
@@ -75,6 +76,84 @@ async function getAllowedEnemyGuilds() {
   return getColumnUnique(`${SHEET_DATA}!D:D`);
 }
 
+// Повертає унікальний список категорій (data!I:I), відфільтрований від порожніх
+async function getDeckCategories() {
+  const sheet = SHEET_DATA;
+  // I2:I
+  const range = `${SHEET_DATA}!I2:I`; // з 2-го рядка
+  const list = values
+    .map(r => (r[0] || '').toString().trim())
+    .filter(Boolean);
+  // унікально + відсортувати за абеткою
+  return Array.from(new Set(list)).sort((a,b)=>a.localeCompare(b,'uk'));
+}
+
+// За назвою категорії (H) повертає список колод (G), унікально і відсортовано
+async function getDecksByCategory(category) {
+  const sheet = SHEET_DATA;
+  // прочитати діапазон G2:H (або G2:H1000 — як зручно)
+  const range = `${SHEET_DATA}!G2:H`; // G=назва колоди, H=категорія
+  const norm = s => (s||'').toString().trim().toLowerCase();
+  const target = norm(category);
+  const decks = rows
+    .filter(r => norm(r[1]) === target)   // H дорівнює категорії
+    .map(r => (r[0] || '').toString().trim()) // беремо G
+    .filter(Boolean);
+  return Array.from(new Set(decks)).sort((a,b)=>a.localeCompare(b,'uk'));
+}
+
+// Повертає унікальний список категорій (data!I:I), без порожніх і без "Боги"
+async function getDeckCategories() {
+  const sheets = await getSheets();
+  const range = `${SHEET_DATA}!I2:I`;            // з 2-го рядка
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range
+  });
+  const values = res.data.values || [];           // <-- Оце якраз потрібно
+
+  const list = values
+    .map(r => (r[0] || '').toString().trim())
+    .filter(Boolean)
+    .filter(v => v.toLowerCase() !== 'боги');     // "Боги" не показуємо як категорію
+
+  return Array.from(new Set(list)).sort((a, b) => a.localeCompare(b, 'uk'));
+}
+
+// За назвою категорії (H) повертає список колод (G), унікально і відсортовано
+async function getDecksByCategory(category) {
+  const sheets = await getSheets();
+  const range = `${SHEET_DATA}!G2:H`;            // G=назва колоди, H=категорія
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range
+  });
+  const rows = res.data.values || [];            // масив [[G,H], ...]
+
+  const norm = s => (s || '').toString().trim().toLowerCase();
+  const target = norm(category);
+
+  const decks = rows
+    .filter(r => norm(r[1]) === target)          // H дорівнює вибраній категорії
+    .map(r => (r[0] || '').toString().trim())    // беремо G
+    .filter(Boolean);
+
+  return Array.from(new Set(decks)).sort((a, b) => a.localeCompare(b, 'uk'));
+}
+
+
+// Записати вибраного суперника в "Планування!A1"
+async function setPlanningA1(value) {
+  const sheets = await getSheets();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_PLAN}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[ String(value || '') ]] }
+  });
+}
+
+
 // ---------- Players row ops ----------
 async function findRowByNick(nick) {
   const sheets = await getSheets();
@@ -105,6 +184,22 @@ async function appendPlayerRow(nick) {
   });
   return findRowByNick(nick);
 }
+
+// Пише лише силу бога (Q/S/U/W), не чіпаючи назву (P/R/T/V)
+async function updateGodPower(row, godIndex, power) {
+  const sheets = await getSheets();
+  // номера колонок 1-based: Q=17, S=19, U=21, W=23
+  const powerColMap = { 1:17, 2:19, 3:21, 4:23 };
+  const colNum = powerColMap[godIndex];
+  const range = `${SHEET_DECKS}!${colNumberToLetter(colNum)}${row}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[ power ]] }
+  });
+}
+
 
 async function readRow(row) {
   const sheets = await getSheets();
@@ -522,8 +617,81 @@ async function getReservList() {
   return out;
 }
 
+
+// ---- Статистика: ensure + find + increment D ----
+async function ensureStatsSheet() {
+  const sheets = await getSheets();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const has = (meta.data.sheets || []).some(s => s.properties?.title === SHEET_STATS);
+  if (has) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: SHEET_STATS } } }]
+    }
+  });
+  // (не обов’язково) — можеш поставити хедери A..D, якщо хочеш:
+  // await sheets.spreadsheets.values.update({
+  //   spreadsheetId: SPREADSHEET_ID,
+  //   range: `${SHEET_STATS}!A1:D1`,
+  //   valueInputOption: 'RAW',
+  //   requestBody: { values: [[ 'Гравець', 'B', 'C', 'D' ]] }
+  // });
+}
+
+async function findStatsRowByNick(nick) {
+  const sheets = await getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_STATS}!A:A`
+  });
+  const rows = res.data.values || [];
+  for (let i = 0; i < rows.length; i++) {
+    const cell = (rows[i][0] || '').toString().trim();
+    if (cell && cell.toLowerCase() === nick.toLowerCase()) {
+      return i + 1; // 1-based
+    }
+  }
+  return null;
+}
+
+/**
+ * Інкрементує колонку D у «Статистика» для вказаного ніку.
+ * Якщо рядка немає — додає новий рядок: [nick, '', '', <inc>]
+ */
+async function incrementStatLoss(nick, inc = 1) {
+  await ensureStatsSheet();
+  const sheets = await getSheets();
+  let row = await findStatsRowByNick(nick);
+  if (!row) {
+    // якщо рядка немає — додаємо з нулів і одразу інкрементним значенням у D
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_STATS}!A:D`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [[ nick, '', '', inc ]] }
+    });
+    return inc;
+  }
+  // читаємо поточне D
+  const getRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_STATS}!D${row}:D${row}`
+  });
+  const curRaw = (getRes.data.values && getRes.data.values[0] && getRes.data.values[0][0]) || '0';
+  const cur = Number.parseInt(String(curRaw).replace(/[^\d-]/g, ''), 10);
+  const next = (Number.isFinite(cur) ? cur : 0) + inc;
+    await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_STATS}!D${row}:D${row}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[ next ]] }
+  });
+  return next;
+} 
+
 // Очищає "знесли ..." в колонці H для (F=nick, G=deckNo) і записує залишок (0..100) у колонку I.
-// Повертає { cleared: N, rows: [номери_рядків] }.
 async function clearDestroyedAndSetRemain(nick, deckNo, remainPercent) {
   const sheets = await getSheets();
 
@@ -653,6 +821,44 @@ async function getGateConfig() {
   return items;
 }
 
+// === NOFIGHT: читання data!K:M (імена будівель і стан колонки M) ===
+async function getDataBuildingsKM() {
+  const sheets = await getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_DATA}!K2:M`, // K=name, L=prio1, M=prio2/dont touch
+  });
+  const vals = res.data.values || [];
+  // вертаємо [{ row, name, p1, p2 }]
+  return vals.map((r, i) => ({
+    row: i + 2, // реальний рядок на аркуші
+    name: String((r[0] || '')).trim(),
+    p1: (r[1] ?? ''),
+    p2: (r[2] ?? ''),
+  })).filter(x => x.name);
+}
+
+// === NOFIGHT: оновлення міток у колонці M (ставити/знімати "dont touch") ===
+async function updateNoFightFlags({ setRows = [], clearRows = [] }) {
+  const sheets = await getSheets();
+  const data = [];
+
+  for (const row of setRows) {
+    data.push({ range: `${SHEET_DATA}!M${row}:M${row}`, values: [[ 'dont touch' ]] });
+  }
+  for (const row of clearRows) {
+    data.push({ range: `${SHEET_DATA}!M${row}:M${row}`, values: [[ '' ]] });
+  }
+  if (!data.length) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data
+    }
+  });
+}
 
 /** Прочитати активну "браму/бастіон": data!N2 (порожньо = не вибрано) */
 async function getActiveGateKey() {
@@ -719,13 +925,17 @@ module.exports = {
   getAllowedBuildings,
   getAllowedEnemyNicks,
   getAllowedEnemyGuilds,
-
+  getDeckCategories,
+  getDecksByCategory,
   findRowByNick,
+  getDataBuildingsKM,
+  updateNoFightFlags,
   appendPlayerRow,
   readRow,
   updateSlot,
   appendArchive,
-
+  getDeckCategories,
+  getDecksByCategory,
   getPlanTargetsDetailed,
   setPlanRowStatus,
   getNextFreeUsageSlot,
@@ -744,4 +954,7 @@ module.exports = {
   getBuildingPriorities,
   getActiveGateKey,
   setActiveGateKey,
+  incrementStatLoss,
+  updateGodPower,
+  setPlanningA1,
 };

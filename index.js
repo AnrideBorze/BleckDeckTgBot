@@ -15,26 +15,30 @@ const {
   getFactions,
   findAllowedNick,
   getAllowedBuildings,
+  getDataBuildingsKM,
+  updateNoFightFlags,
   getAllowedEnemyNicks,
   getAllowedEnemyGuilds,
+  setPlanningA1,
   getPlanLookRows,
   findRowByNick,
   appendPlayerRow,
   readRow,
   updateSlot,
   appendArchive,
-
+  getDeckCategories,      
+  getDecksByCategory,
   getPlanTargetsDetailed,
   setPlanRowStatus,
   getNextFreeUsageSlot,
   setUsageSlotText,
-
+  updateGod,
   upsertEnemyRow,
   getEnemyDecks,
-
+  incrementStatLoss,
   getRandomFightTarget,
   updateAltar,
-  updateGod,
+  updateGodPower,
 
   // нове/для /fight
   getBuildingPriorities,   // читає data!K:M → Map<nameLower, {pL, pM}>
@@ -221,47 +225,77 @@ function includesNick(listStr, nick) {
 }
 function deckLabelFromInstr(instr) {
   const s = (instr || '').toString().trim();
-  if (s === '1') return { label: 'перша колода',   code: '1'   };
-  if (s === '2') return { label: 'друга колода',    code: '2'   };
-  if (s === '3') return { label: 'третя колода',    code: '3'   };
-  if (s === '4') return { label: 'четверта колода', code: '4'   };
-  if (s === '5-6' || s === '5–6' || s === '5 — 6') return { label: 'бог 1', code: 'god1' }; // можна зробити розумнішим
-  return { label: 'перша колода', code: '1' };
+
+  // 1..4 звичайні колоди
+  if (/^Перша колода$/i.test(s))    return { label: 'перша колода',   code: '1' };
+  if (/^Друга колода$/i.test(s))    return { label: 'друга колода',    code: '2' };
+  if (/^Третя колода$/i.test(s))    return { label: 'третя колода',    code: '3' };
+  if (/^Четверта колода$/i.test(s)) return { label: 'четверта колода', code: '4' };
+
+  // боги/вівтарі — будь-що, що містить ці слова
+  if (/(вівтар|аква|гея|марок|кхас|таа)/i.test(s)) {
+    return { label: s, code: 'god' }; // ВАЖЛИВО: НЕ число
+  }
+
+  // інше — нейтрально (щоб не чіпати G)
+  return { label: s || '—', code: 'other' };
 }
+
+
+
 
 // ===== Keyboards =====
 function buildDeckWizardKeyboard() {
   const rows = [
     // 4 звичайні колоди
-    [ Markup.button.callback('1', 'slot:s1'), Markup.button.callback('2', 'slot:s2'),
-      Markup.button.callback('3', 'slot:s3'), Markup.button.callback('4', 'slot:s4') ],
+    [ Markup.button.callback('Перша колода', 'slot:s1'), Markup.button.callback('Друга колода', 'slot:s2'),
+      Markup.button.callback('Третя колода', 'slot:s3'), Markup.button.callback('Четверта колода', 'slot:s4') ],
     // вівтар
     [ Markup.button.callback('Вівтар зелений', 'slot:altarG'),
       Markup.button.callback('Вівтар червоний', 'slot:altarR') ],
     // боги
-    [ Markup.button.callback('Бог 1', 'slot:god1'), Markup.button.callback('Бог 2', 'slot:god2'),
-      Markup.button.callback('Бог 3', 'slot:god3'), Markup.button.callback('Бог 4', 'slot:god4') ],
+    [ Markup.button.callback('Аква', 'slot:god1'), Markup.button.callback('Гея', 'slot:god2'),
+      Markup.button.callback('Марок', 'slot:god3'), Markup.button.callback('Кхас', 'slot:god4') ],
     [ Markup.button.callback('❌ Скасувати', 'cancel') ],
   ];
   return Markup.inlineKeyboard(rows);
 }
 
-function buildFactionsKeyboard(factions, page=0, perPage=8, slotCode='s1') {
-  const total = factions.length;
+
+function buildCategoriesKeyboard(categories, page=0, perPage=8, slotCode='s1') {
+  const total = categories.length;
   const pages = Math.max(1, Math.ceil(total / perPage));
   const p = Math.max(0, Math.min(page, pages-1));
-  const slice = factions.slice(p*perPage, p*perPage + perPage);
+  const slice = categories.slice(p*perPage, p*perPage + perPage);
 
-  const rows = slice.map((name, i) => [Markup.button.callback(name, `fac:${slotCode}:${p}:${i}`)]);
+  const rows = slice.map((name, i) => [Markup.button.callback(name, `cat:${slotCode}:${p}:${i}`)]);
   if (pages > 1) {
     const nav = [];
-    if (p > 0) nav.push(Markup.button.callback('« Назад', `facnav:${slotCode}:${p-1}`));
-    if (p < pages-1) nav.push(Markup.button.callback('Вперед »', `facnav:${slotCode}:${p+1}`));
+    if (p > 0) nav.push(Markup.button.callback('« Назад', `catnav:${slotCode}:${p-1}`));
+    if (p < pages-1) nav.push(Markup.button.callback('Вперед »', `catnav:${slotCode}:${p+1}`));
     if (nav.length) rows.push(nav);
   }
   rows.push([Markup.button.callback('❌ Скасувати', 'cancel')]);
   return Markup.inlineKeyboard(rows);
 }
+
+function buildDecksByCategoryKeyboard(decks, page=0, perPage=8, slotCode='s1') {
+  const total = decks.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const p = Math.max(0, Math.min(page, pages-1));
+  const slice = decks.slice(p*perPage, p*perPage + perPage);
+
+  const rows = slice.map((name, i) => [Markup.button.callback(name, `deck:${slotCode}:${p}:${i}`)]);
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) nav.push(Markup.button.callback('« Назад', `decknav:${slotCode}:${p-1}`));
+    if (p < pages-1) nav.push(Markup.button.callback('Вперед »', `decknav:${slotCode}:${p+1}`));
+    if (nav.length) rows.push(nav);
+  }
+  rows.push([Markup.button.callback('❌ Скасувати', 'cancel')]);
+  return Markup.inlineKeyboard(rows);
+}
+
 
 // ===== Commands =====
 bot.start((ctx) => ctx.reply('Привіт! /help — довідка. Спершу задай нік: /setnick <нік>'));
@@ -269,20 +303,19 @@ bot.help((ctx) => ctx.reply([
   'Команди:',
   '/setnick <нік> — встановити або змінити свій нік (рядок у стовпчику “Наші гравці”).',
   '/showme [нік] — показує ваші (або вказаного ніку) 6 колод: 1, 2, 3, Боги, 1 резервна, 2 резервна.',
-  '/fight [N] — підбір цілей з «Планування»: без N = 4 цілі, або N ∈ 1..4. Враховує дозволи (F) і відмічає удар в Y/Z/AA/AB та H.',
+  '/fight — підбір цілі з «Планування» (видає 1 ціль за виклик). Враховує дозволи (F) і відмічає удар в Y/Z/AA/AB та H.',
   '/enemies — показує всі цілі з «Планування» (будівля → гравці та їх колоди), читаємо з 3-го рядка.',
   '/id — показати chatId/userId/threadId.',
 
   '',
   'Оновлення колоди:',
-  '/deck — майстер з кнопками (обираєш слот → фракція зі списку data!B → сила).',
-  '/deck_<1-6>_<фракція>_<сила> — швидко без пробілів. "_" = пробіл у назві фракції.',
+  '/deck — майстер: слот → фракція → колода  → сила.',
   '  Приклади: /deck_1_Легіон_333000 · /deck_4_Дикий_Ліс_1,1 · /deck_5_Орден_200,5',
   '  Правила сили: з десятковою — <100 → M; 100–999 → K; ≥1000 → як є; також суфікси K/M.',
   '/deck_set <1-6> <фракція> <сила> — пряме оновлення зі списком data!B.',
 
   '',
-  'Слоти: 1, 2, 3, Боги (4), 1 резервна (5), 2 резервна (6).',
+  'Слоти: 1, 2, 3, 4, боги 1 (5), боги 2 (6).',
   'Фракції: лише зі списку (data!B:B).',
   'Формат відображення сили: 350000 → 350K, 2000000 → 2M.'
 ].join('\n')));
@@ -316,7 +349,7 @@ bot.command('setnick', async (ctx) => {
     // гарантуємо, що рядок у таблиці існує
     let row = await findRowByNick(allowed);
     if (!row) row = await appendPlayerRow(allowed);
-    return ctx.reply(`✅ Нік уже прив’язаний: ${allowed}\nТепер /deck — щоб оновити колоду.`);
+    return ctx.reply(`✅ Нік уже прив’язаний: ${allowed}\nТепер /showme — щоб подивитись що в базі є і потім /deck щоб оновити колоду.`);
   }
 
   // Прив’язуємо нік до цього userId
@@ -329,7 +362,6 @@ bot.command('setnick', async (ctx) => {
   return ctx.reply(`✅ Нік збережено: ${allowed}\nТепер /deck — щоб оновити колоду.`);
 });
 
-// ----- Deck wizard (/deck) -----
 // ----- Deck wizard (/deck) -----
 bot.command('deck', async (ctx) => {
   const nick = getNickByUserId(ctx.from.id);
@@ -344,27 +376,135 @@ bot.on('callback_query', async (ctx) => {
   const uid = ctx.from.id;
   const sess = sessions.get(uid) || {};
 
-  if (data === 'cancel') {
-    sessions.delete(uid);
-    await ctx.answerCbQuery('Скасовано');
-    return;
+  // Пагінація списку
+if (data.startsWith('nfnav:')) {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const s = nofightSessions.get(ctx.from.id);
+  if (!s) return ctx.answerCbQuery();
+
+  const page = parseInt(data.split(':')[1], 10) || 0;
+  s.page = page;
+  nofightSessions.set(ctx.from.id, s);
+
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(buildNoFightKeyboard(s.items, s.selected, s.page, 8).reply_markup);
+  return;
+}
+
+// Тогл елемента
+if (data.startsWith('nftoggle:')) {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const s = nofightSessions.get(ctx.from.id);
+  if (!s) return ctx.answerCbQuery();
+
+  const [, pageStr, idxStr] = data.split(':');
+  const page = parseInt(pageStr, 10) || 0;
+  const idx  = parseInt(idxStr, 10) || 0;
+  const perPage = 8;
+
+  const real = s.items[page * perPage + idx];
+  if (!real) { await ctx.answerCbQuery('Нема такого'); return; }
+
+  if (s.selected.has(real.row)) s.selected.delete(real.row);
+  else s.selected.add(real.row);
+
+  nofightSessions.set(ctx.from.id, s);
+
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(buildNoFightKeyboard(s.items, s.selected, page, 8).reply_markup);
+  return;
+}
+
+// Очистити вибір (нічого не ставити/прибрати всі)
+if (data === 'nfclear') {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const s = nofightSessions.get(ctx.from.id);
+  if (!s) return ctx.answerCbQuery();
+
+  s.selected = new Set();
+  nofightSessions.set(ctx.from.id, s);
+
+  await ctx.answerCbQuery('Вибір очищено');
+  await ctx.editMessageReplyMarkup(buildNoFightKeyboard(s.items, s.selected, s.page, 8).reply_markup);
+  return;
+}
+
+// Застосувати: виставити M="dont touch" для вибраних і зняти для решти, що були відмічені раніше
+if (data === 'nfapply') {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const s = nofightSessions.get(ctx.from.id);
+  if (!s) return ctx.answerCbQuery();
+
+  const toSet   = Array.from(s.selected);
+  const toClear = Array.from(s.prevSelected).filter(r => !s.selected.has(r));
+
+  try {
+    await updateNoFightFlags({ setRows: toSet, clearRows: toClear });
+    nofightSessions.delete(ctx.from.id);
+
+    await ctx.answerCbQuery('Збережено');
+    const setNames = s.items.filter(it => s.selected.has(it.row)).map(it => it.name);
+    const clrNames = s.items.filter(it => s.prevSelected.has(it.row) && !s.selected.has(it.row)).map(it => it.name);
+
+    await ctx.editMessageText(
+      [
+        '✅ Застосовано.',
+        setNames.length ? `Поставлено "dont touch" для: ${setNames.join(', ')}` : '(без нових позначок)',
+        clrNames.length ? `Знято "dont touch" для: ${clrNames.join(', ')}` : ''
+      ].filter(Boolean).join('\n')
+    );
+  } catch (e) {
+    console.error('nfapply error', e);
+    await ctx.answerCbQuery('Помилка');
+    await ctx.reply('❌ Не вдалося оновити data!M. Перевір доступ/діапазони.');
   }
+  return;
+}
+
+  if (data === 'cancel') {
+  sessions.delete(uid);
+  // додати:
+  if (typeof nofightSessions !== 'undefined') {
+    nofightSessions.delete(uid);
+  }
+  await ctx.answerCbQuery('Скасовано');
+  try { await ctx.editMessageText('❌ Скасовано.'); } catch (_) {}
+  return;
+}
+
 
   // ВИБІР СЛОТА
   if (data.startsWith('slot:')) {
     const code = data.split(':')[1];
 
-    // 4 звичайні колоди
-    const normalCodes = { s1: {index:1,label:'Колода 1'}, s2:{index:2,label:'Колода 2'}, s3:{index:3,label:'Колода 3'}, s4:{index:4,label:'Колода 4'} };
-    if (normalCodes[code]) {
-      const slot = normalCodes[code];
-      const factions = await getFactions(); // лише зі списку
-      sessions.set(uid, { step: 'normal_faction', slotIndex: slot.index, slotLabel: slot.label, page: 0, factions });
+      // 4 звичайні колоди — ТЕПЕР ПО-НОВОМУ
+  const normalCodes = { s1: {index:1,label:'Колода 1'}, s2:{index:2,label:'Колода 2'}, s3:{index:3,label:'Колода 3'}, s4:{index:4,label:'Колода 4'} };
+  if (normalCodes[code]) {
+    const slot = normalCodes[code];
+
+    // 1) список "фракцій/груп" із data!I:I (без "Боги")
+    let categories = await getDeckCategories();
+    categories = categories.filter(x => (x || '').toLowerCase() !== 'боги');
+    if (!categories.length) {
       await ctx.answerCbQuery();
-      await ctx.editMessageText(`Слот: ${slot.label}\nОберіть фракцію:`,
-        buildFactionsKeyboard(factions, 0, 8, code));
-      return;
+      return ctx.reply('❗ У списку груп (data!I) порожньо або лишилась тільки "Боги".');
     }
+
+    sessions.set(uid, {
+      step: 'normal_category',
+      slotIndex: slot.index,
+      slotLabel: slot.label,
+      page: 0,
+      categories
+    });
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `Слот: ${slot.label}\nОберіть **фракцію/групу**:`,
+      { parse_mode: 'Markdown', ...buildCategoriesKeyboard(categories, 0, 8, code) }
+    );
+    return;
+  }
+
 
     // Вівтар
     if (code === 'altarG' || code === 'altarR') {
@@ -380,27 +520,141 @@ bot.on('callback_query', async (ctx) => {
     const godMap = { god1:1, god2:2, god3:3, god4:4 };
     if (godMap[code]) {
       const idx = godMap[code];
-      sessions.set(uid, { step: 'god_name', godIndex: idx });
+      sessions.set(uid, { step: 'god_power', godIndex: idx }); // ⬅️ одразу god_power
       await ctx.answerCbQuery();
-      await ctx.editMessageText(`Бог ${idx}\n\nВведи НАЗВУ бога (наприклад: Аква, Гея, Марок, Кхас):`);
+      await ctx.editMessageText(`Бог ${idx}\n\nВведи силу **числом** або 1,1 М / 200,5 К:`, { parse_mode: 'Markdown' });
       return;
     }
 
     return ctx.answerCbQuery('Невідомий слот');
   }
 
-  // ПАГІНАЦІЯ фракцій
-  if (data.startsWith('facnav:')) {
-    const [, code, pageStr] = data.split(':');
-    const s = sessions.get(uid);
-    if (!s || s.step !== 'normal_faction') return ctx.answerCbQuery();
-    const page = parseInt(pageStr, 10) || 0;
-    s.page = page;
-    sessions.set(uid, s);
-    await ctx.answerCbQuery();
-    await ctx.editMessageReplyMarkup(buildFactionsKeyboard(s.factions, s.page, 8, code).reply_markup);
+// ПАГІНАЦІЯ груп
+if (data.startsWith('catnav:')) {
+  const [, code, pageStr] = data.split(':');
+  const s = sessions.get(uid);
+  if (!s || s.step !== 'normal_category') return ctx.answerCbQuery();
+  const page = parseInt(pageStr, 10) || 0;
+  s.page = page;
+  sessions.set(uid, s);
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(buildCategoriesKeyboard(s.categories, s.page, 8, code).reply_markup);
+  return;
+}
+// Пагінація списку суперників
+if (data.startsWith('setteamnav:')) {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const page = parseInt(data.split(':')[1], 10) || 0;
+
+  let teams = await getAllowedEnemyGuilds();
+  teams = Array.from(new Set(teams))
+    .map(s => String(s || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'uk'));
+
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(buildSetTeamKeyboard(teams, page, 8).reply_markup);
+  return;
+}
+
+// Вибір конкретного суперника
+if (data.startsWith('setteam:')) {
+  if (!requireCoordinator(ctx)) return ctx.answerCbQuery();
+  const [, pageStr, idxStr] = data.split(':');
+  const page = parseInt(pageStr, 10) || 0;
+  const idx  = parseInt(idxStr, 10) || 0;
+
+  let teams = await getAllowedEnemyGuilds();
+  teams = Array.from(new Set(teams))
+    .map(s => String(s || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'uk'));
+
+  const perPage = 8;
+  const team = teams[page * perPage + idx];
+  if (!team) {
+    await ctx.answerCbQuery('Помилка вибору');
     return;
   }
+
+  await setPlanningA1(team);
+  await ctx.answerCbQuery(`Обрано: ${team}`);
+  await ctx.editMessageText(`✅ Поточного суперника встановлено: *${team}*\nЗаписано у «Планування!A1».`, { parse_mode: 'Markdown' });
+  return;
+}
+
+// ВИБІР групи
+if (data.startsWith('cat:')) {
+  const [, code, pageStr, idxStr] = data.split(':');
+  const s = sessions.get(uid);
+  if (!s || s.step !== 'normal_category') return ctx.answerCbQuery();
+
+  const page = parseInt(pageStr, 10) || 0;
+  const idx  = parseInt(idxStr, 10) || 0;
+  const category = (s.categories[page * 8 + idx] || '').trim();
+  if (!category) return ctx.answerCbQuery('Помилка вибору');
+
+  // 2) Витягнути колоди для цієї групи (G за H=category)
+  const decks = await getDecksByCategory(category);
+  if (!decks.length) {
+    await ctx.answerCbQuery();
+    return ctx.editMessageText(
+      `Слот: ${s.slotLabel}\nФракція: ${category}\n\nДля цієї групи немає жодної колоди (data!G:H).`
+    );
+  }
+
+  s.category = category;
+  s.decks = decks;
+  s.step = 'normal_deck';
+  s.page = 0;
+  sessions.set(uid, s);
+
+  await ctx.answerCbQuery(`Фракція: ${category}`);
+  await ctx.editMessageText(
+    `Слот: ${s.slotLabel}\nФракція: ${category}\n\nОберіть **колоду**:`,
+    { parse_mode: 'Markdown', ...buildDecksByCategoryKeyboard(decks, 0, 8, code) }
+  );
+  return;
+}
+
+// ПАГІНАЦІЯ колод
+if (data.startsWith('decknav:')) {
+  const [, code, pageStr] = data.split(':');
+  const s = sessions.get(uid);
+  if (!s || s.step !== 'normal_deck') return ctx.answerCbQuery();
+  const page = parseInt(pageStr, 10) || 0;
+  s.page = page;
+  sessions.set(uid, s);
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(buildDecksByCategoryKeyboard(s.decks, s.page, 8, code).reply_markup);
+  return;
+}
+
+
+// ВИБІР конкретної колоди (G)
+if (data.startsWith('deck:')) {
+  const [, code, pageStr, idxStr] = data.split(':');
+  const s = sessions.get(uid);
+  if (!s || s.step !== 'normal_deck') return ctx.answerCbQuery();
+
+  const page = parseInt(pageStr, 10) || 0;
+  const idx  = parseInt(idxStr, 10) || 0;
+  const deckName = (s.decks[page * 8 + idx] || '').trim();
+  if (!deckName) return ctx.answerCbQuery('Помилка вибору');
+
+  // записуємо вибрану назву колоди як "фракцію" для збереження
+  s.faction = deckName;
+  s.step = 'normal_power';
+  sessions.set(uid, s);
+
+  await ctx.answerCbQuery(deckName);
+  await ctx.editMessageText(
+    `Слот: ${s.slotLabel}\nФракція: ${s.category}\nКолода: ${deckName}\n\nВведи силу **числом** або 1,1 М / 200,5 К:`,
+    { parse_mode: 'Markdown' }
+  );
+  return;
+}
+
 
   // ВИБІР ФРАКЦІЇ для звичайної колоди
   if (data.startsWith('fac:')) {
@@ -540,15 +794,7 @@ bot.on('text', async (ctx, next) => {
     return;
   }
 
-  // 3) БОГ: крок 1 — ім’я; крок 2 — сила
-  if (s.step === 'god_name') {
-    const name = String(ctx.message.text || '').trim();
-    if (!name) return ctx.reply('Вкажи назву бога текстом.');
-    s.godName = name;
-    s.step = 'god_power';
-    sessions.set(ctx.from.id, s);
-    return ctx.reply(`Бог ${s.godIndex}: ${name}\n\nТепер введи силу (числом) або 1,1 М / 200,5 К:`);
-  }
+ 
 
   if (s.step === 'god_power') {
     const power = parsePowerSmart(ctx.message.text);
@@ -556,18 +802,18 @@ bot.on('text', async (ctx, next) => {
       return ctx.reply('Сила має бути числом. Приклади: 333000 або 1,1 (це 1.1M) чи 200,5 (це 200.5K).');
     }
 
-    await applyGodUpdate({
+    await applyGodPowerUpdate({
       actor: ctx.from,
       chatId: ctx.chat?.id,
       nick,
-      godIndex: s.godIndex,
-      godName: s.godName,
+      godIndex: s.godIndex,   // 1..4
       power
     }, ctx);
 
     sessions.delete(ctx.from.id);
     return;
   }
+
 
   return next();
 });
@@ -805,8 +1051,29 @@ bot.command('look', async (ctx) => {
   if (buf) await ctx.reply(buf);
 });
 
+// ----- /setteam — вибір поточного суперника (з data!D) і запис у Планування!A1 -----
+bot.command(['setteam', 'Setteam'], async (ctx) => {
+  if (!requireCoordinator(ctx)) return;
+  try {
+    let teams = await getAllowedEnemyGuilds();          // data!D:D
+    teams = Array.from(new Set(teams))                  // унікально
+      .map(s => String(s || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'uk'));
 
-// ----- roles -----
+    if (!teams.length) return ctx.reply('❗ У data!D немає жодного значення.');
+
+    await ctx.reply(
+      'Оберіть поточного суперника (з початку дня):',
+      buildSetTeamKeyboard(teams, 0, 8)
+    );
+  } catch (e) {
+    console.error('/setteam error', e);
+    return ctx.reply('❌ Помилка /setteam.');
+  }
+});
+
+// ----- roles commands -----
 bot.command('whoami', (ctx) => {
   const uid = ctx.from.id;
   const nick = getNickByUserId(uid) || '—';
@@ -962,14 +1229,12 @@ bot.command('lose', async (ctx) => {
     const txt = (ctx.message?.text || '').trim();
     const parts = txt.split(/\s+/);
 
-    // спробуємо одразу взяти № колоди (1..4) із команди
     const deckNo = parseInt(parts[1], 10);
     const nickArg = parts.slice(2).join(' ').trim();
     const nick = nickArg || getNickByUserId(ctx.from.id);
     if (!nick) return ctx.reply('Спершу встанови нік: /setnick <нік>.');
 
     if (!(deckNo >= 1 && deckNo <= 4)) {
-      // запускаємо діалог: спитаємо № колоди
       loseSessions.set(ctx.from.id, { step: 'await_deck', nick });
       return ctx.reply(
         'Вкажи **№ колоди (1–4)** з колонки G у «Плануванні», яка програла.\n' +
@@ -977,7 +1242,6 @@ bot.command('lose', async (ctx) => {
       );
     }
 
-    // № колоди є — питаємо, скільки карт виніс
     loseSessions.set(ctx.from.id, { step: 'await_cards', nick, deckNo });
     return ctx.reply(
       `Окей, ${nick}. Скільки **звичайних** карт ти виніс? (0..8)\n` +
@@ -988,6 +1252,7 @@ bot.command('lose', async (ctx) => {
     await ctx.reply('❌ Помилка /lose.');
   }
 });
+
 
 
 // /reserv — усі гравці без РОЗПОДІЛЕНИХ атак + їхні вільні колоди
@@ -1014,18 +1279,147 @@ bot.command('reserv', async (ctx) => {
   }
 });
 
+bot.command('win', async (ctx) => {
+  try {
+    const parts = (ctx.message.text || '').trim().split(/\s+/);
+    const nick = getNickByUserId(ctx.from.id);
+    if (!nick) return ctx.reply('Спершу встанови нік: /setnick <нік>.');
+
+    const plan = await getPlanTargetsDetailed();
+
+    // Якщо користувач передав номер рядка: /win 27
+    if (parts.length >= 2 && /^\d+$/.test(parts[1])) {
+      const rowNum = parseInt(parts[1], 10);
+      const r = plan.find(x => x.row === rowNum);
+      if (!r) return ctx.reply(`Рядок ${rowNum} не знайдено у «Плануванні».`);
+      if (!r.status || !/^видано/i.test(r.status)) {
+        return ctx.reply(`У рядку ${rowNum} немає статусу «видано».`);
+      }
+      if (!r.status.toLowerCase().includes(nick.toLowerCase())) {
+        return ctx.reply(`Рядок ${rowNum} «видано» не на тебе (${nick}).`);
+      }
+
+      const newStatus = r.status.replace(/^видано/i, 'знесли');
+      await setPlanRowStatus(rowNum, newStatus);
+      // (опц.) якщо хочеш одразу добивати — розкоментуй:
+      // await setPlanRowRemainPercent(rowNum, 0);
+
+      return ctx.reply(`✅ Готово! Рядок ${rowNum}: статус змінено на «знесли».`);
+    }
+
+    // Без номера — беремо останній «видано» на цього гравця
+    const myIssued = plan
+      .filter(r => r.status && /^видано/i.test(r.status) && r.status.toLowerCase().includes(nick.toLowerCase()))
+      .sort((a, b) => b.row - a.row); // «останній» — з найбільшим номером рядка
+
+    if (!myIssued.length) {
+      return ctx.reply('Немає рядків зі статусом «видано» на тебе.');
+    }
+
+    const t = myIssued[0];
+    const newStatus = t.status.replace(/^видано/i, 'знесли');
+    await setPlanRowStatus(t.row, newStatus);
+    // (опц.) добити залишок:
+    // await setPlanRowRemainPercent(t.row, 0);
+
+    return ctx.reply(`✅ Готово! Рядок ${t.row}: статус змінено на «знесли».`);
+  } catch (e) {
+    console.error('win error', e);
+    return ctx.reply('Сталася помилка при оновленні статусу.');
+  }
+});
+
+// .env (приклад)
+// ASSIGN_WEBAPP_URL=https://script.google.com/macros/s/XXXX/exec
+// ASSIGN_SECRET=your-long-secret
+const ASSIGN_WEBAPP_URL = process.env.ASSIGN_WEBAPP_URL;
+const ASSIGN_SECRET = process.env.ASSIGN_SECRET;
+
+// (опційно) обмежити команду лише для координаторів
+const ASSIGN_ADMINS = (process.env.ASSIGN_ADMINS || '').split(',').filter(Boolean);
+// приклад: ASSIGN_ADMINS=12345678,987654321
+
+bot.command('assign', async (ctx) => {
+  try {
+    // перевірка прав (опційно — прибери якщо не треба)
+    if (ASSIGN_ADMINS.length && !ASSIGN_ADMINS.includes(String(ctx.from.id))) {
+      return ctx.reply('⛔ Ця команда доступна лише координаторам.');
+    }
+
+    if (!ASSIGN_WEBAPP_URL || !ASSIGN_SECRET) {
+      return ctx.reply('Не налаштовано ASSIGN_WEBAPP_URL / ASSIGN_SECRET.');
+    }
+
+    await ctx.reply('⏳ Запускаю розподіл цілей…');
+    const res = await fetch(ASSIGN_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: ASSIGN_SECRET })
+    });
+
+    let json = {};
+    try { json = await res.json(); } catch {}
+
+    if (res.ok && json.ok) {
+      return ctx.reply('✅ Розподіл запущено. Перевіряйте «Планування» за хвилину.');
+    } else {
+      return ctx.reply(`❗ Не вдалось запустити розподіл. ${json.error ? 'Помилка: ' + json.error : ''}`);
+    }
+  } catch (e) {
+    console.error('/assign error', e);
+    return ctx.reply('Сталася помилка при виклику розподілу.');
+  }
+});
+
+// /nofight — позначити будівлі як "dont touch" у data!M
+bot.command(['nofight', 'Nofight'], async (ctx) => {
+  if (!requireCoordinator(ctx)) return;
+  try {
+    let items = await getDataBuildingsKM(); // [{row,name,p1,p2}]
+    if (!items.length) return ctx.reply('❗ У data!K немає переліку будівель.');
+
+    // попередньо виділяємо ті, де вже стоїть "dont touch" у M
+    const prev = new Set(
+      items
+        .filter(it => String(it.p2 || '').trim().toLowerCase() === 'dont touch')
+        .map(it => it.row)
+    );
+    const sel = new Set(prev);
+
+    nofightSessions.set(ctx.from.id, {
+      items,
+      selected: sel,
+      prevSelected: prev, // щоб знати, що треба зняти при застосуванні
+      page: 0
+    });
+
+    await ctx.reply(
+      'Оберіть будівлі, які **не розписувати** (залишити на кінець):\n' +
+      '— повертайтесь стрілками; ✅ — вибрано; натисніть «Застосувати», щоб зберегти.',
+      { ...buildNoFightKeyboard(items, sel, 0, 8), parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    console.error('/nofight error', e);
+    return ctx.reply('❌ Помилка /nofight.');
+  }
+});
+
 
 // ----- Fight: /fight [N] -----
 // Нова логіка: порт → одна з брам/бастіонів (фіксуємо у data!N2) → далі за пріоритетами з data!M
 bot.command('fight', async (ctx) => {
   try {
     const parts = (ctx.message.text || '').trim().split(/\s+/);
-    let want = 4;
-    if (parts.length >= 2) {
-      const n = parseInt(parts[1], 10);
-      if (Number.isFinite(n) && n >= 1 && n <= 4) want = n;
-      else return ctx.reply('Вкажи кількість ударів 1..4: наприклад, /fight 1');
-    }
+    const want = 1;
+    // якщо користувач передав число ≠ 1 — просто підкажемо, але ігноруємо параметр
+if (parts.length >= 2) {
+  const n = parseInt(parts[1], 10);
+  if (Number.isFinite(n) && n !== 1) {
+    await ctx.reply('Зараз /fight видає лише 1 ціль. Повтори команду ще раз, щоб отримати наступну.');
+  } else if (!Number.isFinite(n)) {
+    await ctx.reply('Формат: /fight (без параметрів).');
+  }
+}
 
     const nick = getNickByUserId(ctx.from.id);
     if (!nick) return ctx.reply('Спершу встанови нік: /setnick <нік>.');
@@ -1128,13 +1522,15 @@ bot.command('fight', async (ctx) => {
       await setUsageSlotText(row, usage.index, usedText);
 
       const stamp = new Date().toLocaleString('uk-UA');
-      await setPlanRowStatus(target.row, `знесли: ${nick} (${deck.label}) ${stamp}`);
+      await setPlanRowStatus(target.row, `видано: ${nick} (${deck.label}) ${stamp}`);
       
       // якщо інструкція каже бити 1..4 (звичайна), проставляємо F/G,
       // щоб /lose міг знайти рядок (шукає F=нік і G=№ колоди)
-      if (/^[1-4]$/.test(deck.code)) {
-  await setPlanRowAssigneeAndDeck(target.row, nick, Number(deck.code));
+      const deckId = Number(deck.code);
+if (Number.isInteger(deckId) && deckId >= 1 && deckId <= 4) {
+  await setPlanRowAssigneeAndDeck(target.row, nick, deckId);
 }
+
 
       given.push({
         building: target.building,
@@ -1210,6 +1606,36 @@ async function applyDeckUpdate(payload, ctx) {
   ].join('\n'), { parse_mode: 'Markdown' });
 }
 
+const nofightSessions = new Map(); // сесії мультивибору /nofight
+
+function buildNoFightKeyboard(items, selectedSet, page = 0, perPage = 8) {
+  const total = items.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const p = Math.max(0, Math.min(page, pages - 1));
+  const slice = items.slice(p * perPage, p * perPage + perPage);
+
+  const rows = slice.map((it, i) => {
+    const picked = selectedSet.has(it.row);
+    const label = (picked ? '✅ ' : '▫️ ') + it.name;
+    return [ Markup.button.callback(label, `nftoggle:${p}:${i}`) ];
+  });
+
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) nav.push(Markup.button.callback('« Назад',  `nfnav:${p - 1}`));
+    if (p < pages - 1) nav.push(Markup.button.callback('Вперед »', `nfnav:${p + 1}`));
+    if (nav.length) rows.push(nav);
+  }
+
+  rows.push([
+    Markup.button.callback('✅ Застосувати', 'nfapply'),
+    Markup.button.callback('🧹 Очистити вибір', 'nfclear')
+  ]);
+  rows.push([ Markup.button.callback('❌ Скасувати', 'cancel') ]);
+  return Markup.inlineKeyboard(rows);
+}
+
+
 // ----- Altar update (N/O) -----
 async function applyAltarUpdate(payload, ctx) {
   const { actor, chatId, nick, color, label, power } = payload;
@@ -1237,6 +1663,44 @@ async function applyAltarUpdate(payload, ctx) {
   await ctx.reply([
     `✅ Оновлено для **${nick}**`,
     `${label}: ${oldPower || '—'} → **${power}**`
+  ].join('\n'), { parse_mode: 'Markdown' });
+}
+
+async function applyGodPowerUpdate(payload, ctx) {
+  const { actor, chatId, nick, godIndex, power } = payload;
+
+  let row = await findRowByNick(nick);
+  if (!row) row = await appendPlayerRow(nick);
+
+  const arr = await readRow(row);
+  const map = {
+    1: { powerIdx: 16, label: 'Аква' }, // Q (0-based)
+    2: { powerIdx: 18, label: 'Гея' }, // S
+    3: { powerIdx: 20, label: 'Марок' }, // U
+    4: { powerIdx: 22, label: 'Кхас' }, // W
+  };
+  const meta = map[godIndex];
+  const oldPower = arr[meta.powerIdx] || '';
+
+  // архів — фіксуємо лише зміну сили
+  await appendArchive({
+    actorUserId: actor.id,
+    actorUsername: actor.username || actor.first_name || '',
+    playerNick: nick,
+    slot: meta.label,
+    oldFaction: meta.label,
+    oldPower,
+    newFaction: meta.label,
+    newPower: power,
+    chatId
+  });
+
+  // пишемо тільки силу, без назви
+  await updateGodPower(row, godIndex, power);
+
+  await ctx.reply([
+    `✅ Оновлено для **${nick}**`,
+    `${meta.label}: ${oldPower || '—'} → **${power}**`,
   ].join('\n'), { parse_mode: 'Markdown' });
 }
 
@@ -1285,10 +1749,10 @@ async function applyGodUpdate(payload, ctx) {
 
   const arr = await readRow(row);
   const map = {
-    1: { nameIdx: 15, powerIdx: 16, label: 'Бог 1' }, // P,Q (0-based)
-    2: { nameIdx: 17, powerIdx: 18, label: 'Бог 2' }, // R,S
-    3: { nameIdx: 19, powerIdx: 20, label: 'Бог 3' }, // T,U
-    4: { nameIdx: 21, powerIdx: 22, label: 'Бог 4' }, // V,W
+    1: { nameIdx: 15, powerIdx: 16, label: 'Аква' }, // P,Q (0-based)
+    2: { nameIdx: 17, powerIdx: 18, label: 'Гея' }, // R,S
+    3: { nameIdx: 19, powerIdx: 20, label: 'Марок' }, // T,U
+    4: { nameIdx: 21, powerIdx: 22, label: 'Кхас' }, // V,W
   };
   const meta = map[godIndex];
   const oldName  = arr[meta.nameIdx]  || '';
@@ -1315,6 +1779,28 @@ async function applyGodUpdate(payload, ctx) {
     `Сила: ${oldPower || '—'} → **${power}**`,
   ].join('\n'), { parse_mode: 'Markdown' });
 }
+
+function buildSetTeamKeyboard(teams, page = 0, perPage = 8) {
+  const total = teams.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const p = Math.max(0, Math.min(page, pages - 1));
+  const slice = teams.slice(p * perPage, p * perPage + perPage);
+
+  const rows = slice.map((name, i) => [
+    Markup.button.callback(name, `setteam:${p}:${i}`)
+  ]);
+
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) nav.push(Markup.button.callback('« Назад',  `setteamnav:${p - 1}`));
+    if (p < pages - 1) nav.push(Markup.button.callback('Вперед »', `setteamnav:${p + 1}`));
+    if (nav.length) rows.push(nav);
+  }
+
+  rows.push([Markup.button.callback('❌ Скасувати', 'cancel')]);
+  return Markup.inlineKeyboard(rows);
+}
+
 
 // ===== Launch =====
 bot.launch();
